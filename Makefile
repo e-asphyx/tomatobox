@@ -56,7 +56,7 @@ firmware.bin: $(BIN)
 flash: firmware.bin
 	stm32flash -v -w $< $(TTY)
 
-firmware.elf_CFLAGS := -Wall -fno-common -ffunction-sections -O2 $(ARCH) $(INCLUDE) $(DEFS)
+firmware.elf_CFLAGS := -Wall -fno-common -ffunction-sections -O2 -std=c99 $(ARCH) $(INCLUDE) $(DEFS)
 firmware.elf_LDFLAGS := -Tstm32_flash.ld -nostartfiles -Wl,--cref,--gc-sections,-Map=firmware.map $(ARCH)
 
 ##########################################################

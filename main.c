@@ -42,7 +42,14 @@ typedef struct _sensor_data_t {
 	int humidity;
 } sensor_data_t;
 
+typedef enum {
+	LIGHT_OFF = 0,
+	LIGHT_ON,
+	LIGHT_DAYTIME, /* use on and off time */
+} light_mode_t;
+
 typedef struct _sys_conf_data_t {
+	light_mode_t light_mode;
 	struct tm daytime_start;
 	struct tm daytime_end;
 } sys_conf_data_t;
@@ -57,8 +64,12 @@ static void init_hardware();
 static void daytime_cb(xTimerHandle handle);
 static void cmd_thread(void *arg);
 static void dht_poll_thread(void *arg);
+static void handle_daytime();
 
-static sys_conf_data_t conf_data;
+static sys_conf_data_t conf_data = {
+	.light_mode = LIGHT_OFF,
+};
+
 static sys_conf_t conf = {
 	.data = &conf_data,
 };
@@ -89,18 +100,59 @@ int main(void) {
 	/* System configuration */
 	conf.mutex = xSemaphoreCreateMutex();
 
+	/* Set light state */
+	handle_daytime();
+
 	vTaskStartScheduler();
 
 	return 0;
 }
 
+/* compare time values */
+static inline bool daytime_less(struct tm *t1, struct tm *t2) {
+	return (t1->tm_hour < t2->tm_hour) || ((t1->tm_hour == t2->tm_hour) &&
+			((t1->tm_min < t2->tm_min) || ((t1->tm_min == t2->tm_min) &&
+			(t1->tm_sec < t2->tm_sec))));
+}
+
+static void handle_daytime() {
+	static light_mode_t light_state = LIGHT_OFF;
+
+	if(xSemaphoreTake(conf.mutex, DAYTIME_TIMER_PERIOD_MS / portTICK_RATE_MS)) {
+		if(conf.data->light_mode == LIGHT_DAYTIME) {
+			struct tm tim;
+			rtc_to_time(RTC_GetCounter(), &tim);
+
+			light_mode_t state;
+			if(daytime_less(&conf.data->daytime_start, &conf.data->daytime_end)) {
+				state = !daytime_less(&tim, &conf.data->daytime_start) &&
+						daytime_less(&tim, &conf.data->daytime_end);
+			} else {
+				/* cross midnight */
+				state = !daytime_less(&tim, &conf.data->daytime_start) ||
+						daytime_less(&tim, &conf.data->daytime_end);
+			}
+
+			if(light_state != state) {
+				light_state = state;
+				gpio_set(GPIO_RELAY_LIGHT, light_state);
+			}
+
+		} else if(light_state != conf.data->light_mode) {
+			/* manual light control */
+			light_state = conf.data->light_mode;
+			gpio_set(GPIO_RELAY_LIGHT, light_state);
+		}
+		xSemaphoreGive(conf.mutex);
+	}
+}
+
 static void daytime_cb(xTimerHandle handle) {
 	gpio_set(GPIO_LED_0, led_state);
 	gpio_set(GPIO_LED_1, !led_state);
-
 	led_state = !led_state;
 
-	/* TODO */
+	handle_daytime();
 }
 
 static void dht_poll_thread(void *arg) {
@@ -124,8 +176,8 @@ static void dht_poll_thread(void *arg) {
 			data.read_errors++;
 		}
 
-		/* update (maybe) sensor data */
-		if(xSemaphoreTake(sensor_data_mutex, 0)) {
+		/* update sensor data */
+		if(xSemaphoreTake(sensor_data_mutex, DHT_COLLECTION_PERIOD_MS / portTICK_RATE_MS)) {
 			sensor_data = data;
 			xSemaphoreGive(sensor_data_mutex);
 		}
@@ -152,6 +204,7 @@ static int date_proc(int sern, int argc, char **argv) {
 
 		/* seconds */
 		tim.tm_sec = strtol(arg, &end, 10);
+		if(tim.tm_sec < 0 || tim.tm_sec > 59) return 1;
 
 		if(argc > 1) {
 			arg = argv[1];
@@ -214,9 +267,66 @@ static int temp_proc(int sern, int argc, char **argv) {
 
 /* show temperature and humidity */
 static int light_proc(int sern, int argc, char **argv) {
-	/* TODO */
-	int on = (argc > 0) && !strcmp(argv[0], "on");
-	gpio_set(GPIO_RELAY_0, on);
+	if(!argc) return 1;
+
+	if(argc < 2) {
+		/* on / off mode */
+		int on = !strcmp(argv[0], "on") || !strcmp(argv[0], "1");
+
+		if(xSemaphoreTake(conf.mutex, DAYTIME_TIMER_PERIOD_MS / portTICK_RATE_MS)) {
+			conf.data->light_mode = on;
+			xSemaphoreGive(conf.mutex);
+			handle_daytime();
+
+			serial_iprintf(sern, portMAX_DELAY, "Light is permanently %s\r\n", on ? "on" : "off");
+		}
+	} else {
+		/* start time */
+		struct tm start_time = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+		char *arg = argv[0];
+		char *end;
+		/* hours */
+		start_time.tm_hour = strtol(arg, &end, 10);
+		if(end == arg || start_time.tm_hour < 0 || start_time.tm_hour > 23) return 1;
+		if(*(arg = end)) arg++;
+
+		/* minutes */
+		start_time.tm_min = strtol(arg, &end, 10);
+		if(end == arg || start_time.tm_min < 0 || start_time.tm_min > 59) return 1;
+		if(*(arg = end)) arg++;
+
+		/* seconds */
+		start_time.tm_sec = strtol(arg, &end, 10);
+		if(start_time.tm_sec < 0 || start_time.tm_sec > 59) return 1;
+
+		/* end time */
+		struct tm end_time = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+		arg = argv[1];
+
+		/* hours */
+		end_time.tm_hour = strtol(arg, &end, 10);
+		if(end == arg || end_time.tm_hour < 0 || end_time.tm_hour > 23) return 1;
+		if(*(arg = end)) arg++;
+
+		/* minutes */
+		end_time.tm_min = strtol(arg, &end, 10);
+		if(end == arg || end_time.tm_min < 0 || end_time.tm_min > 59) return 1;
+		if(*(arg = end)) arg++;
+
+		/* seconds */
+		end_time.tm_sec = strtol(arg, &end, 10);
+		if(end_time.tm_sec < 0 || end_time.tm_sec > 59) return 1;
+
+		if(xSemaphoreTake(conf.mutex, DAYTIME_TIMER_PERIOD_MS / portTICK_RATE_MS)) {
+			conf.data->light_mode = LIGHT_DAYTIME;
+			conf.data->daytime_start = start_time;
+			conf.data->daytime_end = end_time;
+			xSemaphoreGive(conf.mutex);
+			handle_daytime();
+
+			serial_send_str(sern, "Daylight mode\r\n", -1, portMAX_DELAY);
+		}
+	}
 
 	return 0;
 }

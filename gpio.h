@@ -4,7 +4,7 @@
 enum {
 	GPIO_LED_0 = 0,
 	GPIO_LED_1,
-	GPIO_RELAY_0,
+	GPIO_RELAY_LIGHT,
 
 	GPIO_NUM_PINS,
 };

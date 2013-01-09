@@ -13,7 +13,7 @@ typedef struct _gpio_pin_t {
 static const gpio_pin_t pins[GPIO_NUM_PINS] = {
 	[GPIO_LED_0] = {GPIOB, GPIO_Pin_8, 1},
 	[GPIO_LED_1] = {GPIOB, GPIO_Pin_9, 1},
-	[GPIO_RELAY_0] = {GPIOC, GPIO_Pin_0, 0},
+	[GPIO_RELAY_LIGHT] = {GPIOC, GPIO_Pin_0, 0},
 };
 
 void gpio_init() {
