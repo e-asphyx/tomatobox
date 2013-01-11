@@ -11,6 +11,7 @@ SOURCES = \
 		st_lib/stm32f10x_pwr.c \
 		st_lib/stm32f10x_rtc.c \
 		st_lib/stm32f10x_tim.c \
+		st_lib/stm32f10x_flash.c \
 		st_lib/misc.c
 
 # FreeRTOS sources
@@ -32,6 +33,7 @@ SOURCES += \
 		cmd.c \
 		am2302.c \
 		gpio.c \
+		conf.c \
 		main.c
 
 INCLUDE = \

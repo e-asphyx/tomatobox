@@ -18,6 +18,7 @@
 #include "cmd.h"
 #include "gpio.h"
 #include "am2302.h"
+#include "conf.h"
 
 #define DAYTIME_TIMER_PERIOD_MS 1000UL
 
@@ -42,20 +43,8 @@ typedef struct _sensor_data_t {
 	int humidity;
 } sensor_data_t;
 
-typedef enum {
-	LIGHT_OFF = 0,
-	LIGHT_ON,
-	LIGHT_DAYTIME, /* use on and off time */
-} light_mode_t;
-
-typedef struct _sys_conf_data_t {
-	light_mode_t light_mode;
-	struct tm daytime_start;
-	struct tm daytime_end;
-} sys_conf_data_t;
-
 typedef struct _sys_conf_t {
-	sys_conf_data_t *data;
+	volatile sys_conf_data_t *data;
 	xSemaphoreHandle mutex;
 } sys_conf_t;
 
@@ -66,13 +55,10 @@ static void cmd_thread(void *arg);
 static void dht_poll_thread(void *arg);
 static void handle_daytime();
 
-static sys_conf_data_t conf_data = {
-	.light_mode = LIGHT_OFF,
-};
-
 static sys_conf_t conf = {
 	.data = &conf_data,
 };
+
 static int led_state = 0;
 static volatile sensor_data_t sensor_data;
 static xSemaphoreHandle sensor_data_mutex;
@@ -80,6 +66,8 @@ static xSemaphoreHandle sensor_data_mutex;
 
 int main(void) {
 	init_hardware();
+	/* load configuration */
+	conf_init();
 
 	gpio_set(GPIO_LED_0, 1);
 	gpio_set(GPIO_LED_1, 0);
@@ -123,14 +111,17 @@ static void handle_daytime() {
 			struct tm tim;
 			rtc_to_time(RTC_GetCounter(), &tim);
 
+			struct tm daytime_start = conf.data->daytime_start;
+			struct tm daytime_end = conf.data->daytime_end;
+
 			light_mode_t state;
-			if(daytime_less(&conf.data->daytime_start, &conf.data->daytime_end)) {
-				state = !daytime_less(&tim, &conf.data->daytime_start) &&
-						daytime_less(&tim, &conf.data->daytime_end);
+			if(daytime_less(&daytime_start, &daytime_end)) {
+				state = !daytime_less(&tim, &daytime_start) &&
+						daytime_less(&tim, &daytime_end);
 			} else {
 				/* cross midnight */
-				state = !daytime_less(&tim, &conf.data->daytime_start) ||
-						daytime_less(&tim, &conf.data->daytime_end);
+				state = !daytime_less(&tim, &daytime_start) ||
+						daytime_less(&tim, &daytime_end);
 			}
 
 			if(light_state != state) {
@@ -267,9 +258,23 @@ static int temp_proc(int sern, int argc, char **argv) {
 
 /* show temperature and humidity */
 static int light_proc(int sern, int argc, char **argv) {
-	if(!argc) return 1;
+	if(!argc) {
+		/* print current settings */
+		if(conf.data->light_mode != LIGHT_DAYTIME) {
+			serial_iprintf(sern, portMAX_DELAY,
+					"Light is permanently %s\r\n", conf.data->light_mode ? "on" : "off");
+		} else {
+			serial_iprintf(sern, portMAX_DELAY,
+					"Daytime %02d:%02d:%02d ... %02d:%02d:%02d\r\n",
+					conf.data->daytime_start.tm_hour,
+					conf.data->daytime_start.tm_min,
+					conf.data->daytime_start.tm_sec,
+					conf.data->daytime_end.tm_hour,
+					conf.data->daytime_end.tm_min,
+					conf.data->daytime_end.tm_sec);
+		}
 
-	if(argc < 2) {
+	} else if(argc == 1) {
 		/* on / off mode */
 		int on = !strcmp(argv[0], "on") || !strcmp(argv[0], "1");
 
@@ -324,10 +329,19 @@ static int light_proc(int sern, int argc, char **argv) {
 			xSemaphoreGive(conf.mutex);
 			handle_daytime();
 
-			serial_send_str(sern, "Daylight mode\r\n", -1, portMAX_DELAY);
+			serial_send_str(sern, "Daytime mode\r\n", -1, portMAX_DELAY);
 		}
 	}
 
+	return 0;
+}
+
+static int saveconf_proc(int sern, int argc, char **argv) {
+	if(!conf_write()) {
+		serial_send_str(sern, "Ok\r\n", -1, portMAX_DELAY);
+	} else {
+		serial_send_str(sern, "Failed\r\n", -1, portMAX_DELAY);
+	}
 	return 0;
 }
 
@@ -335,6 +349,7 @@ static const cmd_handler_t cmdroot[] = {
 	{.type = CMD_PROC, .cmd = "date", .h = {.proc = date_proc},},
 	{.type = CMD_PROC, .cmd = "temp", .h = {.proc = temp_proc},},
 	{.type = CMD_PROC, .cmd = "light", .h = {.proc = light_proc},},
+	{.type = CMD_PROC, .cmd = "saveconf", .h = {.proc = saveconf_proc},},
 	{.type = CMD_END},
 };
 

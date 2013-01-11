@@ -122,6 +122,9 @@ SECTIONS
     _edata = .;        /* define a global symbol at data end */
   } >RAM
 
+  /* end of the image */
+  _eimage = _edata - _sdata + _sidata;
+
   /* Uninitialized data section */
   . = ALIGN(4);
   .bss :
