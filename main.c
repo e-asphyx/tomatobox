@@ -19,6 +19,7 @@
 #include "gpio.h"
 #include "am2302.h"
 #include "conf.h"
+#include "dimmer.h"
 
 #define DAYTIME_TIMER_PERIOD_MS 1000UL
 
@@ -66,8 +67,13 @@ static xSemaphoreHandle sensor_data_mutex;
 
 int main(void) {
 	init_hardware();
+
 	/* load configuration */
 	conf_init();
+
+	/* init drivers */
+	dht_init();
+	dimmer_init();
 
 	gpio_set(GPIO_LED_0, 1);
 	gpio_set(GPIO_LED_1, 0);
@@ -345,10 +351,24 @@ static int saveconf_proc(int sern, int argc, char **argv) {
 	return 0;
 }
 
+static int dim_proc(int sern, int argc, char **argv) {
+	unsigned int period;
+	unsigned int high;
+
+	if(argc) {
+		dimmer_set(strtol(argv[0], NULL, 0));
+	} else if(!dimmer_read(&period, &high)) {
+		serial_iprintf(sern, portMAX_DELAY,	"P:%u,H:%u\r\n", period, high);
+	}
+
+	return 0;
+}
+
 static const cmd_handler_t cmdroot[] = {
 	{.type = CMD_PROC, .cmd = "date", .h = {.proc = date_proc},},
 	{.type = CMD_PROC, .cmd = "temp", .h = {.proc = temp_proc},},
 	{.type = CMD_PROC, .cmd = "light", .h = {.proc = light_proc},},
+	{.type = CMD_PROC, .cmd = "dim", .h = {.proc = dim_proc},},
 	{.type = CMD_PROC, .cmd = "saveconf", .h = {.proc = saveconf_proc},},
 	{.type = CMD_END},
 };
@@ -382,7 +402,6 @@ static void init_hardware() {
     rtc_init();
     serial_init(CMD_SERIAL, SERIAL_BAUDRATE);
 	serial_enabled(CMD_SERIAL, 1); /* enable */
-	dht_init();
 }
 
 /*-----------------------------------------------------------------------------*/

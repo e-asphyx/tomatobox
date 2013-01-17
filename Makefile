@@ -34,6 +34,7 @@ SOURCES += \
 		am2302.c \
 		gpio.c \
 		conf.c \
+		dimmer.c \
 		main.c
 
 INCLUDE = \

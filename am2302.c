@@ -17,9 +17,12 @@
 /* Use TIM3_CH1 */
 #define DHT_GPIO GPIOC
 #define DHT_PIN GPIO_Pin_6
-#define DHT_TIM_CLK RCC_APB1Periph_TIM3
-#define DHT_GPIO_CLK (RCC_APB2Periph_GPIOC | RCC_APB2Periph_AFIO)
-#define DHT_TIMER TIM3 /* Uses ABP1 clock */
+#define DHT_CLK_ENABLE \
+do { \
+	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM3, ENABLE); \
+	RCC_APB2PeriphClockCmd((RCC_APB2Periph_GPIOC | RCC_APB2Periph_AFIO), ENABLE); \
+} while(0)
+#define DHT_TIMER TIM3 /* Uses APB2 clock */
 #define DHT_TIMER_CHANNEL TIM_Channel_1
 #define DHT_IRQN TIM3_IRQn
 #define DHT_GPIO_REMAP GPIO_FullRemap_TIM3
@@ -57,7 +60,7 @@ static inline void start_timer();
 static inline void stop_timer();
 /*-----------------------------------------------------------------------------*/
 static xQueueHandle cmd_msgbox; /* read requests */
-xSemaphoreHandle irq_sem;
+static xSemaphoreHandle irq_sem;
 static volatile pwm_capture_t pwm_data;
 /*-----------------------------------------------------------------------------*/
 
@@ -90,8 +93,7 @@ int dht_init() {
 	xTaskCreate(dht_thread, (const signed char *)"DHT", configMINIMAL_STACK_SIZE, NULL, DHT_PRIO, NULL);
 
 	/* Enable clocks */
-	RCC_APB1PeriphClockCmd(DHT_TIM_CLK, ENABLE);
-	RCC_APB2PeriphClockCmd(DHT_GPIO_CLK, ENABLE);
+	DHT_CLK_ENABLE;
 
 	/* Pin configuration */
 	gpio_input();
