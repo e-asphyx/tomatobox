@@ -352,16 +352,12 @@ static int saveconf_proc(int sern, int argc, char **argv) {
 }
 
 static int dim_proc(int sern, int argc, char **argv) {
-	unsigned int period;
-	unsigned int high;
-
 	if(argc) {
 		dimmer_set(strtol(argv[0], NULL, 0));
-	} else if(!dimmer_read(&period, &high)) {
-		serial_iprintf(sern, portMAX_DELAY,	"P:%u,H:%u\r\n", period, high);
+		return 0;
+	} else {
+		return 0;
 	}
-
-	return 0;
 }
 
 static const cmd_handler_t cmdroot[] = {

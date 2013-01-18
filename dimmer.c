@@ -35,59 +35,38 @@ TIM1 -> (ITR0) TIM4 -> (ITR3) TIM2
 #define PHASE_TRIGGER TIM_TS_ITR0 /* <- TIM1 */
 
 /*-----------------------------------------------------------------------------*/
-/* Use TIM2_CH4 (remapped to PB11) for PWM */
-#define PWM_GPIO GPIOB
-#define PWM_PIN GPIO_Pin_11
+/* Use TIM2_CH4 (remapped to PA0) for PWM */
+#define PWM_GPIO GPIOA
+#define PWM_PIN GPIO_Pin_0
 #define PWM_CLK_ENABLE \
 do { \
 	RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE); \
-	RCC_APB2PeriphClockCmd((RCC_APB2Periph_GPIOB | RCC_APB2Periph_AFIO), ENABLE); \
+	RCC_APB2PeriphClockCmd((RCC_APB2Periph_GPIOA | RCC_APB2Periph_AFIO), ENABLE); \
 } while(0)
 #define PWM_TIMER TIM2 /* Uses APB1 clock */
-#define PWM_TIMER_CHANNEL_INIT(x) TIM_OC4Init(PWM_TIMER, (x))
-#define PWM_TIMER_CHANNEL_REG CCR4
-#define PWM_GPIO_REMAP GPIO_FullRemap_TIM2
+#define PWM_TIMER_CHANNEL_INIT(x) TIM_OC1Init(PWM_TIMER, (x))
+#define PWM_TIMER_CHANNEL_REG CCR1
 #define PWM_GET_PCLK_FREQ(x) (((RCC->CFGR >> 8) & 0x7) >= 4 ? (x)->PCLK1_Frequency * 2 : (x)->PCLK1_Frequency)
 #define PWM_TRIGGER TIM_TS_ITR3 /* <- TIM4 */
 
 #define BASE_FREQ 1000000
-#define MAX_VALUE 255
-#define TRIAC_TRIGGER_PULSE_US 50
+#define MAX_VALUE 100
+#define TRIAC_TRIGGER_PULSE_US 100
 
-typedef struct _pwm_capture_t pwm_capture_t;
-struct _pwm_capture_t {
-	unsigned int period;
-	unsigned int high;
-};
 /*-----------------------------------------------------------------------------*/
 static volatile unsigned int dimmer_phase = 0;
-static xSemaphoreHandle irq_sem;
-static volatile pwm_capture_t pwm_data;
 
-static const uint8_t acostab[MAX_VALUE + 1] = {
-	255, 245, 241, 237, 235, 232, 230, 228, 226, 224, 223, 221, 220, 218, 217, 215,
-	214, 213, 211, 210, 209, 208, 207, 205, 204, 203, 202, 201, 200, 199, 198, 197,
-	196, 195, 194, 193, 192, 192, 191, 190, 189, 188, 187, 186, 185, 185, 184, 183,
-	182, 181, 181, 180, 179, 178, 177, 177, 176, 175, 174, 174, 173, 172, 171, 171,
-	170, 169, 168, 168, 167, 166, 165, 165, 164, 163, 163, 162, 161, 161, 160, 159,
-	158, 158, 157, 156, 156, 155, 154, 154, 153, 152, 152, 151, 150, 150, 149, 148,
-	148, 147, 146, 146, 145, 144, 144, 143, 143, 142, 141, 141, 140, 139, 139, 138,
-	137, 137, 136, 135, 135, 134, 134, 133, 132, 132, 131, 130, 130, 129, 128, 128,
-	127, 127, 126, 125, 125, 124, 123, 123, 122, 121, 121, 120, 120, 119, 118, 118,
-	117, 116, 116, 115, 114, 114, 113, 112, 112, 111, 111, 110, 109, 109, 108, 107,
-	107, 106, 105, 105, 104, 103, 103, 102, 101, 101, 100, 99, 99, 98, 97, 97,
-	96, 95, 94, 94, 93, 92, 92, 91, 90, 90, 89, 88, 87, 87, 86, 85,
-	84, 84, 83, 82, 81, 81, 80, 79, 78, 78, 77, 76, 75, 74, 74, 73,
-	72, 71, 70, 70, 69, 68, 67, 66, 65, 64, 63, 63, 62, 61, 60, 59,
-	58, 57, 56, 55, 54, 53, 52, 51, 50, 48, 47, 46, 45, 44, 42, 41,
-	40, 38, 37, 35, 34, 32, 31, 29, 27, 25, 23, 20, 18, 14, 10, 0
+static const uint16_t acostab[MAX_VALUE - 1] = {
+	959, 931, 911, 893, 877, 863, 849, 837, 825, 814, 804, 793, 784, 774,
+	765, 756, 747, 738, 730, 722, 714, 706, 698, 690, 683, 675, 668, 661, 653, 646,
+	639, 632, 625, 618, 611, 605, 598, 591, 584, 578, 571, 564, 558, 551, 545, 538,
+	532, 525, 519, 512, 505, 499, 492, 486, 479, 473, 466, 460, 453, 446, 440, 433,
+	426, 419, 413, 406, 399, 392, 385, 378, 371, 363, 356, 349, 341, 334, 326, 318,
+	310, 302, 294, 286, 277, 268, 259, 250, 240, 231, 220, 210, 199, 187, 175, 161,
+	147, 131, 113, 93, 65
 };
 /*-----------------------------------------------------------------------------*/
-int dimmer_init() {
-	vSemaphoreCreateBinary(irq_sem);
-	if(irq_sem == NULL) return -1;
-	xSemaphoreTake(irq_sem, 0);
-
+void dimmer_init() {
 	/* Enable clocks */
 	ZC_CLK_ENABLE;
 	PHASE_CLK_ENABLE;
@@ -184,25 +163,10 @@ int dimmer_init() {
 
 	/* Start PWM timer */
     PWM_TIMER->CR1 |= TIM_CR1_CEN;
-
-	return 0;
-}
-
-int dimmer_read(unsigned int *period, unsigned int *high) {
-	xSemaphoreTake(irq_sem, 0);
-
-	if(xSemaphoreTake(irq_sem, 100 / portTICK_RATE_MS)) {
-		*period = pwm_data.period;
-		*high = pwm_data.high;
-
-		return 0;
-	}
-
-	return -1;
 }
 
 void dimmer_set(unsigned int val) {
-	if(val >= 255) {
+	if(val >= MAX_VALUE) {
 		/* always on */
 		PWM_TIMER->PWM_TIMER_CHANNEL_REG = 0xffff;
 	} else if(!val) {
@@ -210,26 +174,17 @@ void dimmer_set(unsigned int val) {
 		PWM_TIMER->PWM_TIMER_CHANNEL_REG = 0;
 	} else {
 		PWM_TIMER->PWM_TIMER_CHANNEL_REG = TRIAC_TRIGGER_PULSE_US;
-		dimmer_phase = acostab[val & 0xff];
+		dimmer_phase = acostab[val - 1];
 	}
 }
 
 /*-----------------------------------------------------------------------------*/
 void ZC_IRQ_HANDLER(void) {
-	portBASE_TYPE preempt = pdFALSE;
-
 	if(ZC_TIMER->SR & TIM_FLAG_CC1) {
-		unsigned int high = pwm_data.high = ZC_TIMER->CCR2;
-		unsigned int period = pwm_data.period = ZC_TIMER->CCR1;
-		unsigned int half = period >> 1;
-
+		unsigned int half = ZC_TIMER->CCR1 >> 1;
 		PWM_TIMER->ARR = half - 1; /* correct period */
-		PHASE_TIMER->ARR = ((high - half) >> 1) + ((dimmer_phase * half) >> 8);
+		PHASE_TIMER->ARR = ((ZC_TIMER->CCR2 - half) >> 1) + ((dimmer_phase * half) >> 10);
 
 		ZC_TIMER->SR = ~TIM_FLAG_CC1;
-
-		xSemaphoreGiveFromISR(irq_sem, &preempt);
 	}
-
-	portEND_SWITCHING_ISR(preempt);
 }
