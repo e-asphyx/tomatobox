@@ -31,6 +31,9 @@
 #define SENSOR_STACK_SIZE (configMINIMAL_STACK_SIZE + 512)
 
 #define SERIAL_BAUDRATE 57600
+#define LEDS_NUM 2
+#define BLINK_DELAY_MS 10UL
+#define DHT_RESPONSE_LED 0
 
 #ifndef ABS
 #define ABS(x) ((x) < 0 ? -(x) : (x))
@@ -52,17 +55,20 @@ typedef struct _sys_conf_t {
 /*-----------------------------------------------------------------------------*/
 static void init_hardware();
 static void daytime_cb(xTimerHandle handle);
+static void blink_cb(xTimerHandle handle);
 static void cmd_thread(void *arg);
 static void dht_poll_thread(void *arg);
 static void handle_daytime();
+static void do_blink(int led, portTickType delay);
 
 static sys_conf_t conf = {
 	.data = &conf_data,
 };
 
-static int led_state = 0;
 static volatile sensor_data_t sensor_data;
 static xSemaphoreHandle sensor_data_mutex;
+
+static xTimerHandle blink_timers[LEDS_NUM];
 /*-----------------------------------------------------------------------------*/
 
 int main(void) {
@@ -75,14 +81,16 @@ int main(void) {
 	dht_init();
 	dimmer_init();
 
-	gpio_set(GPIO_LED_0, 1);
-	gpio_set(GPIO_LED_1, 0);
-
 	/* Daylight control timer */
 	xTimerHandle daytime_timer = xTimerCreate((const signed char*)"Daytime", DAYTIME_TIMER_PERIOD_MS / portTICK_RATE_MS,
-									pdTRUE,	NULL, daytime_cb);
-
+									pdTRUE, NULL, daytime_cb);
 	xTimerStart(daytime_timer, portMAX_DELAY);
+
+	int i;
+	for(i = 0; i < LEDS_NUM; i++) {
+		blink_timers[i] = xTimerCreate((const signed char*)"Blink", BLINK_DELAY_MS / portTICK_RATE_MS,
+									pdFALSE, (void*)i, blink_cb);
+	}
 
 	/* Command interpreter */
 	xTaskCreate(cmd_thread, (const signed char *)"Cmd", CMD_STACK_SIZE, (void*)CMD_SERIAL, CMD_PRIO, NULL);
@@ -145,11 +153,20 @@ static void handle_daytime() {
 }
 
 static void daytime_cb(xTimerHandle handle) {
-	gpio_set(GPIO_LED_0, led_state);
-	gpio_set(GPIO_LED_1, !led_state);
-	led_state = !led_state;
-
 	handle_daytime();
+}
+
+static void blink_cb(xTimerHandle handle) {
+	int led = (int)pvTimerGetTimerID(handle);
+	gpio_set(GPIO_LED_0 + led, 1);
+}
+
+/* perform short blink */
+static void do_blink(int led, portTickType delay) {
+	if(led < LEDS_NUM) {
+		gpio_set(GPIO_LED_0 + led, 0);
+		xTimerStart(blink_timers[led], delay);
+	}
 }
 
 static void dht_poll_thread(void *arg) {
@@ -166,6 +183,7 @@ static void dht_poll_thread(void *arg) {
 		dht_error_t err;
 		if(dht_read(read_sem, &data.temperature, &data.humidity, &err) == 0) {
 			data.timestamp = xTaskGetTickCount();
+			do_blink(DHT_RESPONSE_LED, DHT_COLLECTION_PERIOD_MS / portTICK_RATE_MS);
 
 			/* TODO: PID here */
 
