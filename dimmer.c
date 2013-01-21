@@ -1,6 +1,7 @@
 /* AC dimmer control */
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "stm32f10x.h"
 
@@ -52,9 +53,15 @@ do { \
 #define BASE_FREQ 1000000
 #define MAX_VALUE 100
 #define TRIAC_TRIGGER_PULSE_US 100
+#define DIMMER_PRIO (tskIDLE_PRIORITY + 3)
+#define DIMMER_STACK_SIZE (configMINIMAL_STACK_SIZE + 128)
 
 /*-----------------------------------------------------------------------------*/
 static volatile unsigned int dimmer_phase = 0;
+static volatile unsigned int ac_period = 0;
+static volatile unsigned int ac_high = 0;
+
+static xSemaphoreHandle irq_sem;
 
 static const uint16_t acostab[MAX_VALUE - 1] = {
 	959, 931, 911, 893, 877, 863, 849, 837, 825, 814, 804, 793, 784, 774,
@@ -65,8 +72,15 @@ static const uint16_t acostab[MAX_VALUE - 1] = {
 	310, 302, 294, 286, 277, 268, 259, 250, 240, 231, 220, 210, 199, 187, 175, 161,
 	147, 131, 113, 93, 65
 };
+
+static void dimmer_thread(void *data);
 /*-----------------------------------------------------------------------------*/
 void dimmer_init() {
+	/* Create task */
+	vSemaphoreCreateBinary(irq_sem);
+	xSemaphoreTake(irq_sem, 0);
+	xTaskCreate(dimmer_thread, (const signed char *)"Dimmer", DIMMER_STACK_SIZE, NULL, DIMMER_PRIO, NULL);
+
 	/* Enable clocks */
 	ZC_CLK_ENABLE;
 	PHASE_CLK_ENABLE;
@@ -178,13 +192,67 @@ void dimmer_set(unsigned int val) {
 	}
 }
 
+/* optimized median of 5 */
+#define SWAP_IF_GREATER(a,b) \
+do { \
+	if((a) > (b)) { \
+		unsigned int temp = (a); \
+		(a) = (b); \
+		(b) = temp; \
+	} \
+} while(0)
+
+static inline unsigned int opt_med5(unsigned int *p) {
+	SWAP_IF_GREATER(p[0],p[1]);
+	SWAP_IF_GREATER(p[3],p[4]);
+	SWAP_IF_GREATER(p[0],p[3]);
+	SWAP_IF_GREATER(p[1],p[4]);
+	SWAP_IF_GREATER(p[1],p[2]);
+	SWAP_IF_GREATER(p[2],p[3]);
+	SWAP_IF_GREATER(p[1],p[2]);
+
+	return p[2];
+}
+
+static void dimmer_thread(void *data) {
+	unsigned int prev_period[5] = {0, 0, 0, 0, 0};
+	unsigned int prev_high[5] = {0, 0, 0, 0, 0};
+	int idx = 0;
+
+	while(1) {
+		/* wait for interrupt */
+		xSemaphoreTake(irq_sem, portMAX_DELAY);
+
+		/* median filter */
+		prev_period[idx] = ac_period;
+		prev_high[idx] = ac_high;
+		if(idx++ == 5) idx = 0;
+
+		unsigned int sorted_period[5];
+		unsigned int sorted_high[5];
+
+		memcpy(sorted_period, prev_period, sizeof(unsigned int) * 5);
+		memcpy(sorted_high, prev_high, sizeof(unsigned int) * 5);
+
+		unsigned int half = opt_med5(sorted_period) >> 1;
+		unsigned int high = opt_med5(sorted_high);
+
+		PWM_TIMER->ARR = half - 1; /* correct period */
+		PHASE_TIMER->ARR = ((high - half) >> 1) + ((dimmer_phase * half) >> 10); /* correct phase */
+	}
+}
+
 /*-----------------------------------------------------------------------------*/
 void ZC_IRQ_HANDLER(void) {
+	portBASE_TYPE preempt = pdFALSE;
+
 	if(ZC_TIMER->SR & TIM_FLAG_CC1) {
-		unsigned int half = ZC_TIMER->CCR1 >> 1;
-		PWM_TIMER->ARR = half - 1; /* correct period */
-		PHASE_TIMER->ARR = ((ZC_TIMER->CCR2 - half) >> 1) + ((dimmer_phase * half) >> 10);
+		ac_period = ZC_TIMER->CCR1;
+		ac_high = ZC_TIMER->CCR2;
 
 		ZC_TIMER->SR = ~TIM_FLAG_CC1;
+
+		xSemaphoreGiveFromISR(irq_sem, &preempt);
 	}
+	portEND_SWITCHING_ISR(preempt);
 }
