@@ -35,7 +35,7 @@ extern char _eimage; /* from linker */
 typedef struct _conf_img_t {
 	uint32_t magic;
 	sys_conf_data_t data;
-	uint8_t sum;
+	uint32_t crc;
 } conf_img_t __attribute__((aligned(4)));
 
 /* default config */
@@ -45,7 +45,15 @@ volatile sys_conf_data_t conf_data = {
 
 static unsigned long conf_address = 0;
 
+static uint32_t calc_crc32(uint32_t *data, unsigned int size) {
+	CRC->CR = CRC_CR_RESET;
+	while(size--) CRC->DR = *(data++);
+	return CRC->DR;
+}
+
 void conf_init() {
+	RCC_AHBPeriphClockCmd(RCC_AHBPeriph_CRC, ENABLE);
+
 	unsigned long addr = CONF_AREA_START_ADDR;
 	conf_img_t *found = NULL;
 
@@ -66,13 +74,8 @@ void conf_init() {
 
 	if(found && found->magic == CONF_MAGIC) {
 		/* verify checksum */
-		uint8_t *ptr = (uint8_t*)&found->data;
-		unsigned long sum = 0;
-		int cnt = sizeof(sys_conf_data_t);
-		while(cnt--) sum += *(ptr++);
-		sum += found->sum;
-
-		if((sum & 0xff) == 0) {
+		uint32_t crc = calc_crc32((uint32_t*)&found->data, sizeof(sys_conf_data_t) / 4);
+		if(crc == found->crc) {
 			conf_data = found->data;
 			conf_address = (unsigned long)found;
 		}
@@ -85,11 +88,7 @@ int conf_write() {
 	img.data = conf_data;
 
 	/* compute checksum */
-	uint8_t *ptr = (uint8_t*)&img.data;
-	unsigned long sum = 0;
-	int cnt = sizeof(sys_conf_data_t);
-	while(cnt--) sum += *(ptr++);
-	img.sum = (-sum) & 0xff;
+	img.crc = calc_crc32((uint32_t*)&img.data, sizeof(sys_conf_data_t) / 4);
 
 	unsigned long page_addr = CONF_AREA_START_ADDR;
 	unsigned long erase_page_addr = 0; /* don't erase */
@@ -123,7 +122,7 @@ int conf_write() {
 
 	uint32_t *ptr32 = (uint32_t*)&img;
 	unsigned long addr = conf_address;
-	cnt = sizeof(conf_img_t) >> 2;
+	unsigned int cnt = sizeof(conf_img_t) >> 2;
 
 	while(status == FLASH_COMPLETE && cnt) {
 		status = FLASH_ProgramWord(addr, *(ptr32++));

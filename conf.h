@@ -2,6 +2,7 @@
 #define _CONF_H_
 
 #include <time.h>
+#include "pid.h"
 
 typedef enum {
 	LIGHT_OFF = 0,
@@ -15,7 +16,10 @@ struct _sys_conf_data_t {
 	light_mode_t light_mode;
 	struct tm daytime_start;
 	struct tm daytime_end;
-};
+
+	/* Fan PID */
+	pid_coef_t fan_coef;
+} __attribute__((aligned(4)));
 
 extern volatile sys_conf_data_t conf_data;
 
