@@ -35,6 +35,7 @@ SOURCES += \
 		gpio.c \
 		conf.c \
 		dimmer.c \
+		pid.c \
 		main.c
 
 INCLUDE = \
@@ -59,7 +60,7 @@ firmware.bin: $(BIN)
 flash: firmware.bin
 	stm32flash -v -w $< $(TTY)
 
-firmware.elf_CFLAGS := -g -Wall -fno-common -ffunction-sections -O2 -std=c99 $(ARCH) $(INCLUDE) $(DEFS)
+firmware.elf_CFLAGS := -g -Wall -O2 -fno-common -ffunction-sections -std=c99 $(ARCH) $(INCLUDE) $(DEFS)
 firmware.elf_LDFLAGS := -Tstm32_flash.ld -nostartfiles -Wl,--cref,--gc-sections,-Map=firmware.map $(ARCH)
 
 ##########################################################

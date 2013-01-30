@@ -34,6 +34,8 @@ AS_DEPS = $(patsubst %.s, $(DEP_PREFIX)/%.d, $(AS_SOURCES))
 
 DEPS = $(C_DEPS) $(CXX_DEPS) $(AS_DEPS)
 
+AS_LISTINGS = $(patsubst %.o, %.lst, $(OBJECTS))
+
 ifneq ($(strip $(CXX_OBJECTS)),)
     LINKER=$(CXX)
 else
@@ -52,6 +54,9 @@ SUBDIRS_CLEAN = $(addsuffix .clean, $(SUBDIRS))
 SUBDIRS_MAKE = $(addsuffix .subdir, $(SUBDIRS))
 
 CC_AS_OPT = -x assembler-with-cpp
+ifdef AS_LISTING
+	AS_LISTING_OPT = -Wa,-adhln=$(patsubst %.o,%.lst,$@)
+endif
 
 .PHONY: all clean strip $(SUBDIRS_MAKE) $(SUBDIRS_CLEAN)
 
@@ -72,10 +77,10 @@ $(DEPS): $(sort $(foreach X, $(DEPS), $(dir $(X)).stamp))
 
 # compilation rules
 $(C_OBJECTS): $(OBJ_PREFIX)/%.o: %.c $(DEP_PREFIX)/%.d
-	$(CC) $(CPPFLAGS) $(CFLAGS) $($(BIN)_CFLAGS) $($(SHARED_LIB)_CFLAGS) -c $< -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $($(BIN)_CFLAGS) $($(SHARED_LIB)_CFLAGS) $(AS_LISTING_OPT) -c $< -o $@
 
 $(CXX_OBJECTS): $(OBJ_PREFIX)/%.o: %.cpp $(DEP_PREFIX)/%.d
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $($(BIN)_CXXFLAGS) $($(SHARED_LIB)_CXXFLAGS) -c $< -o $@
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $($(BIN)_CXXFLAGS) $($(SHARED_LIB)_CXXFLAGS) $(AS_LISTING_OPT) -c $< -o $@
 
 $(AS_OBJECTS): $(OBJ_PREFIX)/%.o: %.s $(DEP_PREFIX)/%.d
 	$(CC) $(CC_AS_OPT) $(CPPFLAGS) $(ASFLAGS) $($(BIN)_ASFLAGS) $($(SHARED_LIB)_ASFLAGS) -c $< -o $@
@@ -105,6 +110,6 @@ $(SUBDIRS_CLEAN):
 	$(MAKE) -C $(patsubst %.clean, %, $@) clean
 
 clean: $(SUBDIRS_CLEAN)
-	$(RM) $(BIN) $(OBJECTS) $(DEPS) $(SHARED_LIB_NAME) $(SHARED_LIB_SONAME) $(SHARED_LIB_LINKNAME)
+	$(RM) $(BIN) $(OBJECTS) $(DEPS) $(AS_LISTINGS) $(SHARED_LIB_NAME) $(SHARED_LIB_SONAME) $(SHARED_LIB_LINKNAME)
 
 -include $(DEPS)

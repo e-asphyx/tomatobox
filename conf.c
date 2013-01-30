@@ -41,6 +41,10 @@ typedef struct _conf_img_t {
 /* default config */
 volatile sys_conf_data_t conf_data = {
 	.light_mode = LIGHT_OFF,
+	.temperature = {
+		[LIGHT_OFF] = 25 * FP_ONE,
+		[LIGHT_ON] = 25 * FP_ONE,
+	},
 };
 
 static unsigned long conf_address = 0;

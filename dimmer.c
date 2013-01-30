@@ -51,7 +51,7 @@ do { \
 #define PWM_TRIGGER TIM_TS_ITR3 /* <- TIM4 */
 
 #define BASE_FREQ 1000000
-#define MAX_VALUE 100
+#define DIMMER_MAX 100
 #define TRIAC_TRIGGER_PULSE_US 100
 #define DIMMER_PRIO (tskIDLE_PRIORITY + 3)
 #define DIMMER_STACK_SIZE (configMINIMAL_STACK_SIZE + 128)
@@ -63,7 +63,7 @@ static volatile unsigned int ac_high = 0;
 
 static xSemaphoreHandle irq_sem;
 
-static const uint16_t acostab[MAX_VALUE - 1] = {
+static const uint16_t acostab[DIMMER_MAX - 1] = {
 	959, 931, 911, 893, 877, 863, 849, 837, 825, 814, 804, 793, 784, 774,
 	765, 756, 747, 738, 730, 722, 714, 706, 698, 690, 683, 675, 668, 661, 653, 646,
 	639, 632, 625, 618, 611, 605, 598, 591, 584, 578, 571, 564, 558, 551, 545, 538,
@@ -180,7 +180,7 @@ void dimmer_init() {
 }
 
 void dimmer_set(unsigned int val) {
-	if(val >= MAX_VALUE) {
+	if(val >= DIMMER_MAX) {
 		/* always on */
 		PWM_TIMER->PWM_TIMER_CHANNEL_REG = 0xffff;
 	} else if(!val) {

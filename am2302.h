@@ -2,6 +2,7 @@
 #define _AM2302_H_
 
 #include <stdint.h>
+#include "FreeRTOS.h"
 #include "semphr.h"
 
 #define DHT_COLLECTION_PERIOD_MS 2000UL
@@ -17,6 +18,7 @@ typedef enum {
 
 /*-----------------------------------------------------------------------------*/
 int dht_init();
+/* temperature in 1/10 deg C, humidity in 1/10 % */
 int dht_read(xSemaphoreHandle read_sem, int *temperature, int *humidity, dht_error_t *error);
 
 #endif

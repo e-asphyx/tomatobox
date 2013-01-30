@@ -20,6 +20,7 @@
 #include "am2302.h"
 #include "conf.h"
 #include "dimmer.h"
+#include "pid.h"
 
 #define DAYTIME_TIMER_PERIOD_MS 1000UL
 
@@ -61,14 +62,16 @@ static void dht_poll_thread(void *arg);
 static void handle_daytime();
 static void do_blink(int led, portTickType delay);
 
+/* static variables */
 static sys_conf_t conf = {
 	.data = &conf_data,
 };
 
 static volatile sensor_data_t sensor_data;
 static xSemaphoreHandle sensor_data_mutex;
-
 static xTimerHandle blink_timers[LEDS_NUM];
+static pid_state_t fan_pid;
+static volatile light_mode_t light_state = LIGHT_OFF; /* used for choosing temperature */
 /*-----------------------------------------------------------------------------*/
 
 int main(void) {
@@ -80,6 +83,10 @@ int main(void) {
 	/* init drivers */
 	dht_init();
 	dimmer_init();
+
+	/* Fan PID */
+	pid_coef_t fan_coef = conf.data->fan_coef;
+	pid_init(&fan_pid, &fan_coef, conf.data->fan_lower_limit, DIMMER_MAX);
 
 	/* Daylight control timer */
 	xTimerHandle daytime_timer = xTimerCreate((const signed char*)"Daytime", DAYTIME_TIMER_PERIOD_MS / portTICK_RATE_MS,
@@ -117,14 +124,13 @@ static inline bool daytime_less(struct tm *t1, struct tm *t2) {
 			(t1->tm_sec < t2->tm_sec))));
 }
 
+/* switch light on and off setup "day" or "night" temperature */
 static void handle_daytime() {
-	static light_mode_t light_state = LIGHT_OFF;
+	struct tm tim;
+	rtc_to_time(RTC_GetCounter(), &tim);
 
 	if(xSemaphoreTake(conf.mutex, DAYTIME_TIMER_PERIOD_MS / portTICK_RATE_MS)) {
 		if(conf.data->light_mode == LIGHT_DAYTIME) {
-			struct tm tim;
-			rtc_to_time(RTC_GetCounter(), &tim);
-
 			struct tm daytime_start = conf.data->daytime_start;
 			struct tm daytime_end = conf.data->daytime_end;
 
@@ -185,14 +191,24 @@ static void dht_poll_thread(void *arg) {
 			data.timestamp = xTaskGetTickCount();
 			do_blink(DHT_RESPONSE_LED, DHT_COLLECTION_PERIOD_MS / portTICK_RATE_MS);
 
-			/* TODO: PID here */
+			if(xSemaphoreTake(conf.mutex, DHT_COLLECTION_PERIOD_MS / portTICK_RATE_MS / 2)) {
+				if(conf.data->fan_mode == FAN_PID) {
+					/* compute PID */
+					fixed_t input = (data.temperature * FP_ONE) / 10;
+					fixed_t out = pid_compute(&fan_pid,	input, conf.data->temperature[light_state],
+							data.timestamp * portTICK_RATE_MS);
 
+					/* Adjust fan */
+					dimmer_set(FP_ROUND(out));
+				}
+				xSemaphoreGive(conf.mutex);
+			}
 		} else {
 			data.read_errors++;
 		}
 
 		/* update sensor data */
-		if(xSemaphoreTake(sensor_data_mutex, DHT_COLLECTION_PERIOD_MS / portTICK_RATE_MS)) {
+		if(xSemaphoreTake(sensor_data_mutex, DHT_COLLECTION_PERIOD_MS / portTICK_RATE_MS / 2)) {
 			sensor_data = data;
 			xSemaphoreGive(sensor_data_mutex);
 		}
