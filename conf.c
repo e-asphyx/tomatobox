@@ -5,6 +5,7 @@
 
 #include "stm32f10x.h"
 #include "conf.h"
+#include "dimmer.h"
 
 extern char _eimage; /* from linker */
 
@@ -45,6 +46,8 @@ volatile sys_conf_data_t conf_data = {
 		[LIGHT_OFF] = 25 * FP_ONE,
 		[LIGHT_ON] = 25 * FP_ONE,
 	},
+	.fan_lower_limit = DIMMER_MIN * FP_ONE,
+	.fan_upper_limit = DIMMER_MAX * FP_ONE,
 };
 
 static unsigned long conf_address = 0;

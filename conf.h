@@ -28,6 +28,7 @@ struct _sys_conf_data_t {
 	/* Fan PID */
 	fan_mode_t fan_mode;
 	fixed_t fan_lower_limit;
+	fixed_t fan_upper_limit;
 
 	pid_coef_t fan_coef;
 } __attribute__((aligned(4)));
