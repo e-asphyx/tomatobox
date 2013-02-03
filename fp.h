@@ -35,6 +35,6 @@ typedef int64_t fixed_d_t; /* double sized type for multiplication and division 
 #define FP_D_MIN INT64_MIN
 #define FP_D_MAX INT64_MAX
 
-fixed_t str_to_fp(const char *str, char **endptr);
+fixed_t str_to_fp(const char *str, const char **endptr);
 
 #endif /* _FP_H_ */

@@ -37,6 +37,7 @@ SOURCES += \
 		dimmer.c \
 		pid.c \
 		fp.c \
+		syscalls.c \
 		main.c
 
 INCLUDE = \

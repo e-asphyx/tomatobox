@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <stdio.h>
 
 #include "stm32f10x.h"
@@ -155,4 +156,56 @@ int time_to_str(char *buf, size_t sz, const struct tm *tim) {
 	return sniprintf(buf, sz, "%02d:%02d:%02d %02d-%02d-%d",
 					tim->tm_hour, tim->tm_min, tim->tm_sec,
 					tim->tm_mday, tim->tm_mon + 1, YEAR_BASE + tim->tm_year);
+}
+
+int validate_time(const struct tm *tim) {
+	return tim->tm_hour >= 0 && tim->tm_hour <= 23 &&
+		tim->tm_min >= 0 && tim->tm_min <= 59 &&
+		tim->tm_sec >= 0 && tim->tm_sec <= 59;
+}
+
+int validate_date(const struct tm *tim) {
+	return tim->tm_mday >= 1 && tim->tm_mday <= 31 &&
+		tim->tm_mon >= 0 && tim->tm_mon <= 11;
+}
+
+int parse_time(const char *str, struct tm *tim) {
+	char *end;
+	/* hours */
+	tim->tm_hour = strtol(str, &end, 10);
+	if(end != str && *end) {
+		str = end + 1;
+		/* minutes */
+		tim->tm_min = strtol(str, &end, 10);
+		if(end != str) {
+			/* seconds (optional) */
+			tim->tm_sec = *end ? strtol(end + 1, NULL, 10) : 0;
+
+			return validate_time(tim);
+		}
+	}
+	return 0;
+}
+
+int parse_date(const char *str, struct tm *tim) {
+	char *end;
+	/* day */
+	tim->tm_mday = strtol(str, &end, 10);
+	if(end != str && *end) {
+		str = end + 1;
+		/* month */
+		tim->tm_mon = strtol(str, &end, 10);
+		if(end != str && *end) {
+			str = end + 1;
+			/* year */
+			tim->tm_year = strtol(str, &end, 10);
+			if(end != str) {
+				tim->tm_mon--;
+				tim->tm_year -= 1900;
+
+				return validate_date(tim);
+			}
+		}
+	}
+	return 0;
 }

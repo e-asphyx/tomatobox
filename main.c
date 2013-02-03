@@ -72,23 +72,32 @@ static void dht_poll_thread(void *arg);
 static void handle_daytime();
 static void do_blink(int led, portTickType delay);
 
-static int date_proc(int sern, int argc, char **argv);
 static int temp_proc(int sern, int argc, char **argv);
-static int light_proc(int sern, int argc, char **argv);
 static int saveconf_proc(int sern, int argc, char **argv);
 static int get_proc(int sern, int argc, char **argv);
 static int set_proc(int sern, int argc, char **argv);
+static int reset_proc(int sern, int argc, char **argv);
 
+/* getters / setters */
 static int gen_fp_get(char *buf, size_t size, int id, volatile void *data);
 static int fan_mode_set(const char *buf, int id, volatile void *data);
 static int fan_mode_get(char *buf, size_t size, int id, volatile void *data);
 static int gen_fp_set(const char *buf, int id, volatile void *data);
 static int fan_upper_limit_set(const char *buf, int id, volatile void *data);
 static int fan_pid_set(const char *buf, int id, volatile void *data);
+
 static int temp_get(char *buf, size_t size, int id, volatile void *data);
 static int hum_get(char *buf, size_t size, int id, volatile void *data);
+
 static int light_mode_set(const char *buf, int id, volatile void *data);
 static int light_mode_get(char *buf, size_t size, int id, volatile void *data);
+static int time_get(char *buf, size_t size, int id, volatile void *data);
+static int daytime_set(const char *buf, int id, volatile void *data);
+
+static int rtc_time_get(char *buf, size_t size, int id, volatile void *data);
+static int rtc_time_set(const char *buf, int id, volatile void *data);
+static int rtc_date_get(char *buf, size_t size, int id, volatile void *data);
+static int rtc_date_set(const char *buf, int id, volatile void *data);
 
 /* static variables */
 static volatile sensor_data_t sensor_data;
@@ -100,16 +109,23 @@ static volatile light_mode_t light_state = LIGHT_OFF; /* used for choosing tempe
 
 /* configuration variables */
 static const conf_var_t cfgvars[] = {
+	/* date */
+	{.key = "rtc.time", .desc = "System time, hh:mm[:ss]", .get = rtc_time_get, .set = rtc_time_set,},
+	{.key = "rtc.date", .desc = "System date, dd:mm:yyyy", .get = rtc_date_get, .set = rtc_date_set,},
+
 	/* light */
-	{.key = "light", .desc = "Light control On/Off/Daytime", .get = light_mode_get, .set = light_mode_set,},
+	{.key = "light.mode", .desc = "Light control On/Off/Daytime", .get = light_mode_get, .set = light_mode_set,},
+	{.key = "light.sdt", .desc = "Daytime start, hh:mm[:ss]",
+		.get = time_get, .set = daytime_set, .data = &conf_data.daytime_start,},
+	{.key = "light.edt", .desc = "Daytime end, hh:mm[:ss]",
+		.get = time_get, .set = daytime_set, .data = &conf_data.daytime_end,},
+
 	/* fan control */
 	{.key = "fan.mode", .desc = "Fan control PID/Manual", .get = fan_mode_get, .set = fan_mode_set,},
-
 	{.key = "fan.min", .desc = "Fan min (in PID mode) or permanent (in manual mode) duty cycle, percent",
 		.get = gen_fp_get, .set = gen_fp_set, .data = &conf_data.fan_lower_limit},
 	{.key = "fan.max", .desc = "Fan mxn duty cycle in PID mode, percent",
 		.get = gen_fp_get, .set = fan_upper_limit_set, .data = &conf_data.fan_upper_limit},
-
 	{.key = "fan.pid.kp", .desc = "Fan PID Kp", .get = gen_fp_get, .set = fan_pid_set, .data = &conf_data.fan_coef.k_p},
 	{.key = "fan.pid.ki", .desc = "Fan PID Ki", .get = gen_fp_get, .set = fan_pid_set, .data = &conf_data.fan_coef.k_i},
 	{.key = "fan.pid.kd", .desc = "Fan PID Kd", .get = gen_fp_get, .set = fan_pid_set, .data = &conf_data.fan_coef.k_d},
@@ -120,6 +136,7 @@ static const conf_var_t cfgvars[] = {
 	{.key = "tsetp.n", .desc = "Temperature setpoint (light switched off)",
 		.get = gen_fp_get, .set = gen_fp_set, .data = &conf_data.temperature[LIGHT_OFF]},
 
+	/* measured values */
 	{.key = "temp", .desc = "Measured temperature", .get = temp_get,},
 	{.key = "hum", .desc = "Measured humidity", .get = hum_get,},
 
@@ -133,12 +150,9 @@ static const cmd_handler_t cmdroot[] = {
 
 	/* temperature monitor */
 	{.type = CMD_PROC, .cmd = "temp", .h = {.proc = temp_proc},},
-	{.type = CMD_PROC, .cmd = "temperature", .h = {.proc = temp_proc},},
-
-	{.type = CMD_PROC, .cmd = "date", .h = {.proc = date_proc},},
-	{.type = CMD_PROC, .cmd = "light", .h = {.proc = light_proc},},
 
 	{.type = CMD_PROC, .cmd = "saveconf", .h = {.proc = saveconf_proc},},
+	{.type = CMD_PROC, .cmd = "reset", .h = {.proc = reset_proc},},
 
 	{.type = CMD_END},
 };
@@ -246,60 +260,6 @@ static void dht_poll_thread(void *arg) {
 	}
 }
 /*-----------------------------------------------------------------------------*/
-/* get/set date and time */
-static int date_proc(int sern, int argc, char **argv) {
-	struct tm tim;
-	rtc_to_time(RTC_GetCounter(), &tim);
-
-	if(argc) {
-		char *arg = argv[0];
-		char *end;
-		/* hours */
-		tim.tm_hour = strtol(arg, &end, 10);
-		if(end == arg || tim.tm_hour < 0 || tim.tm_hour > 23) return 1;
-		if(*(arg = end)) arg++;
-
-		/* minutes */
-		tim.tm_min = strtol(arg, &end, 10);
-		if(end == arg || tim.tm_min < 0 || tim.tm_min > 59) return 1;
-		if(*(arg = end)) arg++;
-
-		/* seconds */
-		tim.tm_sec = strtol(arg, &end, 10);
-		if(tim.tm_sec < 0 || tim.tm_sec > 59) return 1;
-
-		if(argc > 1) {
-			arg = argv[1];
-
-			/* day */
-			tim.tm_mday = strtol(arg, &end, 10);
-			if(end == arg || tim.tm_mday < 1 || tim.tm_mday > 31) return 1;
-			if(*(arg = end)) arg++;
-
-			/* month */
-			tim.tm_mon = strtol(arg, &end, 10);
-			if(end == arg || tim.tm_mon < 1 || tim.tm_mon > 12) return 1;
-			if(*(arg = end)) arg++;
-
-			/* year */
-			tim.tm_year = strtol(arg, &end, 10);
-			if(end == arg) return 1;
-
-			tim.tm_mon--;
-			tim.tm_year -= 1900;
-		}
-
-		/* set time */
-		rtc_set(rtc_from_time(&tim));
-	} else {
-		/* print */
-		char buf[32];
-		time_to_str(buf, sizeof(buf), &tim);
-		serial_iprintf(sern, portMAX_DELAY, "%s\r\n", buf);
-	}
-	return 0;
-}
-
 /* show temperature and humidity */
 static int temp_proc(int sern, int argc, char **argv) {
 	bool follow = (argc > 0) && !strcmp(argv[0], "-f");
@@ -327,86 +287,6 @@ static int temp_proc(int sern, int argc, char **argv) {
 	return 0;
 }
 
-/* show temperature and humidity */
-static int light_proc(int sern, int argc, char **argv) {
-	if(!argc) {
-		/* print current settings */
-		if(conf_data.light_mode != LIGHT_DAYTIME) {
-			serial_iprintf(sern, portMAX_DELAY,
-					"Light is permanently %s\r\n", conf_data.light_mode ? "on" : "off");
-		} else {
-			serial_iprintf(sern, portMAX_DELAY,
-					"Daytime %02d:%02d:%02d ... %02d:%02d:%02d\r\n",
-					conf_data.daytime_start.tm_hour,
-					conf_data.daytime_start.tm_min,
-					conf_data.daytime_start.tm_sec,
-					conf_data.daytime_end.tm_hour,
-					conf_data.daytime_end.tm_min,
-					conf_data.daytime_end.tm_sec);
-		}
-
-	} else if(argc == 1) {
-		/* on / off mode */
-		int on = !strcmp(argv[0], "on") || !strcmp(argv[0], "1");
-
-		if(xSemaphoreTake(conf_mutex, DAYTIME_TIMER_PERIOD_MS / portTICK_RATE_MS)) {
-			conf_data.light_mode = on;
-			xSemaphoreGive(conf_mutex);
-			handle_daytime();
-
-			serial_iprintf(sern, portMAX_DELAY, "Light is permanently %s\r\n", on ? "on" : "off");
-		}
-	} else {
-		/* start time */
-		struct tm start_time = {0, 0, 0, 0, 0, 0, 0, 0, 0};
-		char *arg = argv[0];
-		char *end;
-		/* hours */
-		start_time.tm_hour = strtol(arg, &end, 10);
-		if(end == arg || start_time.tm_hour < 0 || start_time.tm_hour > 23) return 1;
-		if(*(arg = end)) arg++;
-
-		/* minutes */
-		start_time.tm_min = strtol(arg, &end, 10);
-		if(end == arg || start_time.tm_min < 0 || start_time.tm_min > 59) return 1;
-		if(*(arg = end)) arg++;
-
-		/* seconds */
-		start_time.tm_sec = strtol(arg, &end, 10);
-		if(start_time.tm_sec < 0 || start_time.tm_sec > 59) return 1;
-
-		/* end time */
-		struct tm end_time = {0, 0, 0, 0, 0, 0, 0, 0, 0};
-		arg = argv[1];
-
-		/* hours */
-		end_time.tm_hour = strtol(arg, &end, 10);
-		if(end == arg || end_time.tm_hour < 0 || end_time.tm_hour > 23) return 1;
-		if(*(arg = end)) arg++;
-
-		/* minutes */
-		end_time.tm_min = strtol(arg, &end, 10);
-		if(end == arg || end_time.tm_min < 0 || end_time.tm_min > 59) return 1;
-		if(*(arg = end)) arg++;
-
-		/* seconds */
-		end_time.tm_sec = strtol(arg, &end, 10);
-		if(end_time.tm_sec < 0 || end_time.tm_sec > 59) return 1;
-
-		if(xSemaphoreTake(conf_mutex, DAYTIME_TIMER_PERIOD_MS / portTICK_RATE_MS)) {
-			conf_data.light_mode = LIGHT_DAYTIME;
-			conf_data.daytime_start = start_time;
-			conf_data.daytime_end = end_time;
-			xSemaphoreGive(conf_mutex);
-			handle_daytime();
-
-			serial_send_str(sern, "Daytime mode\r\n", -1, portMAX_DELAY);
-		}
-	}
-
-	return 0;
-}
-
 static int saveconf_proc(int sern, int argc, char **argv) {
 	if(!conf_write()) {
 		serial_send_str(sern, "Ok\r\n", -1, portMAX_DELAY);
@@ -415,6 +295,12 @@ static int saveconf_proc(int sern, int argc, char **argv) {
 		serial_send_str(sern, "Failed\r\n", -1, portMAX_DELAY);
 		return 1;
 	}
+}
+
+/* System reset */
+static int reset_proc(int sern, int argc, char **argv) {
+	NVIC_SystemReset();
+	return 0;
 }
 
 static void list_vars(int sern, const conf_var_t *vars) {
@@ -608,6 +494,78 @@ static int light_mode_get(char *buf, size_t size, int id, volatile void *data) {
 	}
 	strncpy(buf, str, size);
 
+	return 0;
+}
+
+static int time_get(char *buf, size_t size, int id, volatile void *data) {
+	volatile struct tm *tim = (volatile struct tm*)data;
+
+	if(sniprintf(buf, size, "%02d:%02d:%02d", tim->tm_hour, tim->tm_min, tim->tm_sec) == size)
+		buf[size - 1] = 0;
+
+	return 0;
+}
+
+static int daytime_set(const char *buf, int id, volatile void *data) {
+	volatile struct tm *tim = (volatile struct tm*)data;
+
+	struct tm tmp;
+	memset(&tmp, 0, sizeof(struct tm));
+
+	if(!parse_time(buf, &tmp)) return -1;
+
+	if(xSemaphoreTake(conf_mutex, DAYTIME_TIMER_PERIOD_MS / portTICK_RATE_MS)) {
+		*tim = tmp;
+		xSemaphoreGive(conf_mutex);
+
+		handle_daytime();
+		return 0;
+	}
+
+	return -1;
+}
+
+/* get/set date and time */
+static int rtc_time_get(char *buf, size_t size, int id, volatile void *data) {
+	struct tm tim;
+	rtc_to_time(RTC_GetCounter(), &tim);
+
+	if(sniprintf(buf, size, "%02d:%02d:%02d", tim.tm_hour, tim.tm_min, tim.tm_sec) == size)
+		buf[size - 1] = 0;
+
+	return 0;
+}
+
+static int rtc_date_get(char *buf, size_t size, int id, volatile void *data) {
+	struct tm tim;
+	rtc_to_time(RTC_GetCounter(), &tim);
+
+	if(sniprintf(buf, size, "%02d-%02d-%d",
+				tim.tm_mday, tim.tm_mon + 1, 1900 + tim.tm_year) == size)
+		buf[size - 1] = 0;
+
+	return 0;
+}
+
+static int rtc_time_set(const char *buf, int id, volatile void *data) {
+	struct tm tim;
+	rtc_to_time(RTC_GetCounter(), &tim);
+
+	if(!parse_time(buf, &tim)) return -1;
+
+	/* set time */
+	rtc_set(rtc_from_time(&tim));
+	return 0;
+}
+
+static int rtc_date_set(const char *buf, int id, volatile void *data) {
+	struct tm tim;
+	rtc_to_time(RTC_GetCounter(), &tim);
+
+	if(!parse_date(buf, &tim)) return -1;
+
+	/* set time */
+	rtc_set(rtc_from_time(&tim));
 	return 0;
 }
 

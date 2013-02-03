@@ -4,7 +4,7 @@
 #define IS_DIGIT(a) ((a) >= '0' && (a) <= '9')
 #define DIGIT(a) ((a) - '0')
 
-fixed_t str_to_fp(const char *str, char **endptr) {
+fixed_t str_to_fp(const char *str, const char **endptr) {
 	int sign;
 	if(*str == '-') {
 		sign = -1;
